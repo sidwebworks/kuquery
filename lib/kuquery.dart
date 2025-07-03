@@ -4,6 +4,5 @@
 library;
 
 export 'src/query_client.dart';
+export 'src/query_cache.dart';
 export 'src/query.dart';
-
-// TODO: Export any libraries intended for clients of this package.

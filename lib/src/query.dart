@@ -1,23 +1,26 @@
 import 'dart:async';
+import 'dart:developer';
+import 'dart:math';
 
-typedef QueryKey = List<dynamic>;
+// Typedefs
+typedef QueryFn<TKey extends Record, TData> = Future<TData> Function(TKey);
 
-typedef QueryFn<TKey extends QueryKey, TData> = Future<TData> Function(TKey);
-
+// Status Enum
 enum QueryStatus { stale, fresh, fetching, loading, error }
 
+// Query State
 class QueryState<TData, TError> {
-  final StreamController<TData?> _controller = StreamController.broadcast();
-  Stream<TData?> get stream => _controller.stream;
-  TData? data;
+  final StreamController<TData> _controller = StreamController.broadcast();
+  Stream<TData> get stream => _controller.stream;
 
+  TData? data;
   TError? error;
   DateTime? lastFetchedAt;
   QueryStatus? status;
 
   QueryState({this.error, this.lastFetchedAt, this.status});
 
-  void setData(TData? data) {
+  void setData(TData data) {
     _controller.add(data);
     this.data = data;
   }
@@ -27,76 +30,84 @@ class QueryState<TData, TError> {
   }
 }
 
-class Query<TKey extends QueryKey, TData, TError> {
-  Duration? staleTime;
-
-  late QueryFn<TKey, TData> fn;
-  late TKey _key;
+class Query<TKey extends Record, TData, TError> {
+  final TKey key;
+  final QueryFn<TKey, TData> fn;
 
   final state = QueryState<TData, TError>();
-  bool enabled = false;
+  final enabled = false;
 
-  Query(TKey key, {QueryFn<TKey, TData>? queryFn}) {
-    if (key.isEmpty) {
-      throw ArgumentError('Query key cannot be empty');
-    }
+  Completer<TData>? _completor;
 
-    if (queryFn == null) {
-      throw ArgumentError('Query Function cannot be null');
-    }
+  Duration? staleTime;
 
-    _key = key;
-    fn = queryFn;
+  Query(this.key, {required this.fn}) {
+    state.status = QueryStatus.stale;
+    state.lastFetchedAt = null;
   }
 
   bool get isStale {
-    if (staleTime == null || state.lastFetchedAt == null) return true;
-    return DateTime.now().difference(state.lastFetchedAt!) > staleTime!;
-  }
-
-  List<String> key() {
-    // Serialize the key
-    return _key.map((e) => e.toString()).toList();
-  }
-
-  Future<TData> execute() async {
-    try {
-      state.status = QueryStatus.fetching;
-
-      final value = await fn(_key);
-
-      state.setData(value);
-      state.lastFetchedAt = DateTime.now();
-      state.status = QueryStatus.fresh;
-
-      return value;
-    } catch (e) {
-      state.error = e as TError;
-      state.status = QueryStatus.error;
-      state.setData(null);
-      rethrow;
+    if (state.status == QueryStatus.stale) {
+      return true;
     }
+
+    if (state.lastFetchedAt == null || staleTime == null) {
+      return true; // If never fetched or no stale time set, consider it stale
+    }
+
+    final now = DateTime.now();
+
+    return now.difference(state.lastFetchedAt!).compareTo(staleTime!) > 0;
+  }
+
+  Future<TData> get data {
+    return _completor?.future ?? execute();
+  }
+
+  Future<TData> execute() {
+    if (state.status == QueryStatus.fetching) return _completor!.future;
+
+    state.status = QueryStatus.fetching;
+
+    _completor = Completer<TData>();
+    state.status = QueryStatus.fetching;
+
+    print('Executing query for key: $key');
+
+    fn(key)
+        .then((value) {
+          print('Finished executing query for key: $key');
+          state.setData(value);
+          state.lastFetchedAt = DateTime.now();
+          state.status = QueryStatus.fresh;
+          _completor?.complete(value);
+        })
+        .catchError((e) {
+          state.error = e as TError;
+          state.status = QueryStatus.error;
+          _completor?.completeError(state.error!);
+        });
+
+    return _completor!.future;
+  }
+
+  void invalidate() {
+    state.status = QueryStatus.stale;
+    state.lastFetchedAt = null;
+    _completor = null;
   }
 }
 
-class QueryCache {
-  Map<String, Query> entries = {};
+Query<TKey, TData, TError> defineQuery<TKey extends Record, TData, TError>({
+  required TKey key,
+  required QueryFn<TKey, TData> queryFn,
+  Duration? staleTime,
+}) {
+  final query = Query<TKey, TData, TError>(key, fn: queryFn);
 
-  QueryCache();
-
-  set(Query query) {
-    final key = query.key().toString();
-
-    entries.putIfAbsent(key, () => query);
+  if (staleTime != null) {
+    query.staleTime = staleTime;
   }
 
-  Query get(String key) {
-    final query = entries[key];
-
-    if (query == null) {
-      throw ArgumentError('Query with key $key not found in cache');
-    }
-
-    return query;
-  }
+  return query;
 }

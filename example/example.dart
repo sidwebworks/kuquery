@@ -3,16 +3,19 @@ import 'package:kuqery/kuquery.dart';
 import 'queries.dart';
 
 main() async {
-  final client = QueryClient();
+  final client = QueryClient(cache: QueryCache());
 
-  final query = client.query(
-    getMedicines,
-    staleTime: Duration(seconds: 60),
-    refetchOnNavigation: true,
-  );
+  final one = client.query(getTodos);
+  final two = client.query(getTodos);
+  final three = client.query(getTodos);
 
-  query.state.stream.listen((data) {
-    print(data);
-    print(query.state.data);
+  one.state.stream.listen((data) {
+    print("One: ${data.length}");
   });
+
+  print((await one.data).length);
+  print((await two.data).length);
+
+  await Future.delayed(const Duration(seconds: 10));
+  print((await three.data).length);
 }

@@ -26,13 +26,11 @@ class Todo {
 
 final dio = Dio();
 
-final getMedicines = Query<List<dynamic>, List<Todo>, DioException>(
-  [
-    'medicines',
-    '123',
-    {"page": 1},
-  ],
+final getTodos = defineQuery(
+  key: ('todos',),
+  staleTime: const Duration(seconds: 30),
   queryFn: (key) async {
+    await Future.delayed(const Duration(seconds: 3)); // Simulate network delay
     final res = await dio.get<List>(
       'https://jsonplaceholder.typicode.com/todos',
       options: Options(headers: {"content-type": "application/json"}),
